@@ -14,7 +14,7 @@ plt.rcParams['font.family'] = 'Meiryo'
 # ==============================
 # 設定
 # ==============================
-TRAIN_DIR = r"C:\Garbage_sorting\trash_app\train"
+TRAIN_DIR ="train" # r"C:\Garbage_sorting\trash_app\train"
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "final_trash_model.h5") # r"C:\Garbage_sorting\trash_app\final_trash_model.h5"
 
 # ==============================
