@@ -63,7 +63,7 @@ elif option == "📸 カメラで撮影":
 
 # ===== 推論処理 =====
 if uploaded_image is not None:
-    st.image(uploaded_image, caption="入力画像", use_column_width=True)
+    st.image(uploaded_image, caption="入力画像", use_container_width=True)
     img = Image.open(uploaded_image).convert("RGB").resize((224, 224))
     x = image.img_to_array(img)
     x = np.expand_dims(x, axis=0) / 255.0
