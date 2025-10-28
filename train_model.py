@@ -10,6 +10,7 @@ from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 import matplotlib.pyplot as plt
+import json
 
 # 設定
 img_size = (224, 224)
@@ -58,9 +59,41 @@ history = model.fit(train, validation_data=val, epochs=epochs, callbacks=callbac
 model.save('final_trash_model.h5')
 print("モデル保存完了")
 
+with open("history.json", "w") as f:
+    json.dump(history.history, f)
+
+print("学習履歴を history.json に保存しました。")
 # 学習可視化
-plt.plot(history.history['accuracy'], label='train')
-plt.plot(history.history['val_accuracy'], label='val')
-plt.legend(); plt.title('Accuracy'); plt.show()
+
+# ---- Accuracy ----
+plt.figure(figsize=(8, 4))
+plt.plot(history.history['accuracy'], label='train acc')
+plt.plot(history.history['val_accuracy'], label='val acc')
+plt.title('Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# ---- Loss ----
+plt.figure(figsize=(8, 4))
+plt.plot(history.history['loss'], label='train loss')
+plt.plot(history.history['val_loss'], label='val loss')
+plt.title('Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.grid(True)
+plt.show()
 
 
+# 青線（train）→ 訓練データ（train） に対する正解率。
+# AIが「学習に使ったデータ」でどれだけ正しく分類できているかを示します。
+
+# オレンジ線（val）→ 検証データ（validation） に対する正解率。
+# AIが「見たことのないデータ」でどれだけ正しく分類できるかを示します。
+
+# loss（train）と val_loss（validation）の両方が下がっていく
+# そして最終的にほぼ横ばいになる
+# val_loss が train_loss より極端に高くならなければ、過学習していない良い学習です
