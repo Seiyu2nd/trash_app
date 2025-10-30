@@ -14,8 +14,8 @@ import json
 
 # 設定
 img_size = (224, 224)
-batch_size = 32
-epochs = 15
+batch_size = 16
+epochs = 50
 
 # データ生成
 datagen = ImageDataGenerator(
