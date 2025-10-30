@@ -19,8 +19,16 @@ epochs = 15
 
 # データ生成
 datagen = ImageDataGenerator(
-    rescale=1./255, rotation_range=20, width_shift_range=0.2,
-    height_shift_range=0.2, zoom_range=0.2, horizontal_flip=True,
+    rescale=1./255,
+    rotation_range=40,         # ← 回転角をもっと大きく
+    width_shift_range=0.3,     # ← 横移動を増やす
+    height_shift_range=0.3,    # ← 縦移動も増やす
+    shear_range=0.3,           # ← 斜め方向に歪ませる
+    zoom_range=0.4,            # ← ズームの幅を広げる
+    brightness_range=[0.6,1.4],# ← 明るさを変える
+    horizontal_flip=True,      # ← 左右反転
+    vertical_flip=True,        # ← 上下反転（使える場合）
+    fill_mode='nearest',       # ← 変形でできた空白を埋める方法
     validation_split=0.2
 )
 
