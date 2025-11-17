@@ -111,7 +111,7 @@ def detect_spray_by_text(image_pil):
     rects = merge_vertical(rects)
     st.write(f"縦方向マージ後の矩形数: {len(rects)}")
 
-    # --- 最適ROI選択 ---
+    # --- 最適ROI(赤帯領域)選択 ---
     candidate = None
     max_score = 0
     for x, y, w, h in rects:
@@ -146,8 +146,8 @@ def detect_spray_by_text(image_pil):
     # --- 判定 ---
     keywords = ["火気", "高温", "注意"]
     if any(k in text_clean for k in keywords):
-        st.success("🔥 スプレー缶の警告文を検出しました。")
+        st.success("スプレー缶の警告文を検出しました。")
         return True
     else:
-        st.info("❌ 特定の警告文は検出されませんでした。")
+        st.info("特定の警告文は検出されませんでした。")
         return False

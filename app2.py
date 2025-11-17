@@ -11,7 +11,7 @@ import matplotlib.font_manager as fm
 import urllib.request
 import zipfile
 import pathlib
-from detect_spray import detect_spray_by_text  # ← ★ OCR判定関数をインポート
+from detect_spray import detect_spray_by_text  # ← OCR判定関数をインポート
 
 # ===== 日本語フォント設定 =====
 font_filename = "ipaexg.ttf"
@@ -133,7 +133,7 @@ if uploaded_image is not None:
 
     # --- OCR検出の補足表示 ---
     if is_spray_text:
-        st.info("⚠️ 画像内に『火気と高温に注意』という文字が検出されました。スプレー缶と判定します。")
+        st.info("画像内に『火気と高温に注意』という文字が検出されました。スプレー缶と判定します。")
 else:
     st.info(t['info'])
 
