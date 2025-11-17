@@ -73,9 +73,12 @@ elif option == t['camera']:
 if uploaded_image is not None:
     st.image(uploaded_image, caption=t['input_image'], use_container_width=True)
 
+    # --- 画像前処理 ---
     img = Image.open(uploaded_image).convert("RGB").resize((224, 224))
     x = image.img_to_array(img)
     x = np.expand_dims(x, axis=0) / 255.0
+
+    # --- モデル予測 ---
     pred = model.predict(x)
     predicted_class = class_names[np.argmax(pred)]
     confidence = np.max(pred)
@@ -94,8 +97,25 @@ if uploaded_image is not None:
     }
     label_translated = labels[lang_code].get(predicted_class, predicted_class)
 
-    # --- 結果表示 ---
+    # --- 判定結果表示 ---
     st.success(f"{t['result']}: **{label_translated}**（{t['confidence']} {confidence*100:.2f}%）")
+
+    # --- ゴミの捨て方表示 ---
+    disposal_instructions = {
+        "ja": {
+            "battery": "乾電池は【不燃ごみ】に入れて捨ててください。使用済み電池は自治体の指定回収場所でも回収可能です。",
+            "spray": "スプレー缶は【危険ごみ】として、ガスを完全に使い切ってから捨ててください。",
+            "lighter": "ライターは中身を使い切り、【危険ごみ】として捨ててください。"
+        },
+        "en": {
+            "battery": "Batteries should be disposed of as non-burnable trash or at designated collection points.",
+            "spray": "Spray cans should be disposed of as hazardous waste after completely using up the gas.",
+            "lighter": "Lighters should be emptied and disposed of as hazardous waste."
+        }
+    }
+    instruction_text = disposal_instructions[lang_code].get(predicted_class, "")
+    if instruction_text:
+        st.info(f"📝 {instruction_text}")
 
     # --- 確率グラフ ---
     st.subheader(t['prob_chart_subtitle'])
@@ -116,3 +136,5 @@ if uploaded_image is not None:
         st.info("⚠️ 画像内に『火気と高温に注意』という文字が検出されました。スプレー缶と判定します。")
 else:
     st.info(t['info'])
+
+
