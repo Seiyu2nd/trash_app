@@ -1,3 +1,5 @@
+# OpenCVで画像処理⇒TesseractでOCR
+
 import cv2
 import numpy as np
 import pytesseract
