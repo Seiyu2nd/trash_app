@@ -11,9 +11,9 @@ import matplotlib.font_manager as fm
 import urllib.request
 import zipfile
 import pathlib
-from detect_spray import detect_spray_by_text  # ← OCR判定関数をインポート
 
 # ===== 日本語フォント設定 =====
+# プロジェクト直下にフォントファイルを置く／ダウンロードして使う
 font_filename = "ipaexg.ttf"
 if not os.path.isfile(font_filename):
     url = "https://moji.or.jp/wp-content/ipafont/IPAexfont/IPAexfont00401.zip"
@@ -24,17 +24,23 @@ if not os.path.isfile(font_filename):
 
 font_path = pathlib.Path(font_filename).resolve()
 jp_prop = fm.FontProperties(fname=str(font_path))
+# フォント登録
 fm.fontManager.addfont(str(font_path))
 plt.rcParams['font.family'] = jp_prop.get_name()
-plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['axes.unicode_minus'] = False  # マイナス記号が□になるのを回避
 
 # ===== 言語選択UI =====
+# 利用可能な言語一覧（キー）
 available_languages = {
     '日本語': 'ja',
     'English': 'en'
 }
+
+# サイドバーで言語を選ぶ
 lang_display = st.sidebar.selectbox("言語を選択 / Choose Language", list(available_languages.keys()))
 lang_code = available_languages[lang_display]
+
+# 選択した言語の翻訳辞書
 t = translations[lang_code]
 
 # ===== 設定 =====
@@ -58,6 +64,7 @@ def load_trash_model():
     return model, class_names
 
 model, class_names = load_trash_model()
+jp_labels = {"battery": "乾電池", "spray": "スプレー缶", "lighter": "ライター"}
 
 # ===== 入力方法 =====
 option = st.radio(t['input_method'], [t['fail'], t['camera']])
@@ -72,52 +79,24 @@ elif option == t['camera']:
 # ===== 推論処理 =====
 if uploaded_image is not None:
     st.image(uploaded_image, caption=t['input_image'], use_container_width=True)
-
-    # --- 画像前処理 ---
     img = Image.open(uploaded_image).convert("RGB").resize((224, 224))
     x = image.img_to_array(img)
     x = np.expand_dims(x, axis=0) / 255.0
-
-    # --- モデル予測 ---
     pred = model.predict(x)
     predicted_class = class_names[np.argmax(pred)]
     confidence = np.max(pred)
 
-    # --- OCRによるスプレー検出 ---
-    is_spray_text = detect_spray_by_text(Image.open(uploaded_image).convert("RGB"))
-
-    if is_spray_text:
-        predicted_class = "spray"
-        confidence = max(confidence, 0.95)  # OCR確定時は高信頼に設定
-
-    # --- 多言語ラベル対応 ---
+    # 言語ごとのラベル対応
     labels = {
         "ja": {"battery": "乾電池", "spray": "スプレー缶", "lighter": "ライター"},
         "en": {"battery": "Battery", "spray": "Spray Can", "lighter": "Lighter"},
     }
     label_translated = labels[lang_code].get(predicted_class, predicted_class)
 
-    # --- 判定結果表示 ---
+    # 結果表示（多言語対応）
     st.success(f"{t['result']}: **{label_translated}**（{t['confidence']} {confidence*100:.2f}%）")
 
-    # --- ゴミの捨て方表示 ---
-    disposal_instructions = {
-        "ja": {
-            "battery": "乾電池は【不燃ごみ】に入れて捨ててください。使用済み電池は自治体の指定回収場所でも回収可能です。",
-            "spray": "スプレー缶は【危険ごみ】として、ガスを完全に使い切ってから捨ててください。",
-            "lighter": "ライターは中身を使い切り、【危険ごみ】として捨ててください。"
-        },
-        "en": {
-            "battery": "Batteries should be disposed of as non-burnable trash or at designated collection points.",
-            "spray": "Spray cans should be disposed of as hazardous waste after completely using up the gas.",
-            "lighter": "Lighters should be emptied and disposed of as hazardous waste."
-        }
-    }
-    instruction_text = disposal_instructions[lang_code].get(predicted_class, "")
-    if instruction_text:
-        st.info(f"📝 {instruction_text}")
-
-    # --- 確率グラフ ---
+    # グラフ表示
     st.subheader(t['prob_chart_subtitle'])
     probs = pred[0]
     class_labels = [labels[lang_code].get(c, c) for c in class_names]
@@ -130,11 +109,5 @@ if uploaded_image is not None:
     for i, v in enumerate(probs):
         ax.text(v + 0.02, i, f"{v*100:.1f}%", va='center', fontproperties=jp_prop)
     st.pyplot(fig)
-
-    # --- OCR検出の補足表示 ---
-    if is_spray_text:
-        st.info("画像内に『火気と高温に注意』という文字が検出されました。スプレー缶と判定します。")
 else:
     st.info(t['info'])
-
-
