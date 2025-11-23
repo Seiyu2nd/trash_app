@@ -17,6 +17,7 @@ translations = {
         'prob_chart_subtitle': '📊 Prediction Probabilities for Each Class',
         'prob_x_label': 'Probability',
         'prob_chart_title': 'Classification Probabilities',
+        'detect_spray':'Warning label detected on spray can.',
 
     },
     'ja': {
@@ -35,6 +36,7 @@ translations = {
         'prob_chart_subtitle': '📊 各クラスの予測確率',
         'prob_x_label': '確率',
         'prob_chart_title': '分類確率',
+        'detect_spray':'スプレー缶の警告文を検出しました。',
     }
 }
 
