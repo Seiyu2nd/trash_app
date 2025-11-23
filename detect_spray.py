@@ -14,7 +14,6 @@ available_languages = {
 }
 
 lang_code = available_languages
-lang_code = available_languages
 t = translations[lang_code]
 
 # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
