@@ -5,6 +5,16 @@ import numpy as np
 import pytesseract
 from PIL import Image
 import streamlit as st
+from my_translation import translations
+
+
+available_languages = {
+    '日本語': 'ja',
+    'English': 'en'
+}
+lang_display = st.sidebar.selectbox("言語を選択 / Choose Language", list(available_languages.keys()))
+lang_code = available_languages[lang_display]
+t = translations[lang_code]
 
 # pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
@@ -148,7 +158,7 @@ def detect_spray_by_text(image_pil):
     # --- 判定 ---
     keywords = ["火気", "高温", "注意"]
     if any(k in text_clean for k in keywords):
-        st.success("スプレー缶の警告文を検出しました。")
+        st.success(t['detect_spray'])
         return True
     else:
         st.info("特定の警告文は検出されませんでした。")
