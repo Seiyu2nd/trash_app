@@ -10,3 +10,17 @@ wheels/
 .venv
 
 .streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+
+# 学習データ
+train/
+*.zip
+
+# モデル
+*.h5
+*.keras
+*.pt
+*.onnx
