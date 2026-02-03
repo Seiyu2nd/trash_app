@@ -1,140 +1,441 @@
 import streamlit as st
-import numpy as np
-from my_translation import translations
-from tensorflow.keras.preprocessing import image
-from tensorflow.keras.models import load_model
-from tensorflow.keras.utils import image_dataset_from_directory
 from PIL import Image
+import numpy as np
 import os
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import urllib.request
-import zipfile
-import pathlib
-from detect_spray import detect_spray_by_text  # ← OCR判定関数をインポート
+import pandas as pd
+import cv2
 
-# ===== 日本語フォント設定 =====
-font_filename = "ipaexg.ttf"
-if not os.path.isfile(font_filename):
-    url = "https://moji.or.jp/wp-content/ipafont/IPAexfont/IPAexfont00401.zip"
-    urllib.request.urlretrieve(url, "IPAexfont.zip")
-    with zipfile.ZipFile("IPAexfont.zip", "r") as z:
-        z.extractall(".")
-    os.rename("IPAexfont00401/ipaexg.ttf", font_filename)
+# ==== OCR エンジン ====
+from ocr_engines.tesseract_engine import run_tesseract
+from ocr_engines.easyocr_engine import run_easyocr
+from ocr_engines.chatgpt_engine import run_chatgpt_ocr
+from ocr_engines.cloudvision_engine import run_cloudvision_multimodal
+# ==== MobileNetV2 ====
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.utils import image_dataset_from_directory
 
-font_path = pathlib.Path(font_filename).resolve()
-jp_prop = fm.FontProperties(fname=str(font_path))
-fm.fontManager.addfont(str(font_path))
-plt.rcParams['font.family'] = jp_prop.get_name()
-plt.rcParams['axes.unicode_minus'] = False
+# ==== 翻訳辞書 ====
+from my_translation import translations
+from disposal.label_translations import LABEL_TRANSLATIONS
+from area_map import AREA_MAP
 
-# ===== 言語選択UI =====
-available_languages = {
-    '日本語': 'ja',
-    'English': 'en'
+
+# ==== 分別ルール ====
+from disposal.how_rules import HOW_RULES, DEFAULT_HOW
+from disposal.schedule_rules import SCHEDULE_RULES, DEFAULT_SCHEDULE
+from disposal.label_normalization import normalize_label 
+
+from disposal.calendar_images import get_calendar_images
+
+# ---------------------------------------------------------
+# Google Cloud Vision
+# ---------------------------------------------------------
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = (
+    r"C:\Garbage_sorting\trash_app\ocr_engines\formidable-rune-481315-i1-db132fbd239c.json"
+)
+
+# ---------------------------------------------------------
+# 定数
+# ---------------------------------------------------------
+MODEL_PATH = "final_trash_model.h5"
+TRAIN_DIR = "train"
+OCR_TARGET_CLASSES = {"battery", "lighter", "spray","light","box_cutter","scissors"}
+
+JP_LABELS = {
+    "battery": "乾電池",
+    "lighter": "ライター",
+    "spray": "スプレー缶",
+    "scissors": "ハサミ",
+    "box_cutter": "カッターナイフ",
+    "light": "電球"
 }
-lang_display = st.sidebar.selectbox("言語を選択 / Choose Language", list(available_languages.keys()))
+
+# ---------------------------------------------------------
+# Session State 初期化（FSM）
+# ---------------------------------------------------------
+for key, default in {
+    "step": "idle",
+    "uploaded_img": None,
+    "result": None,
+    "is_ambiguous": False,
+    "top_label": None,
+    "run_sub_ocr": False,
+    "ward": None,
+    "area": None,
+    "second_label": None,
+
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+# ---------------------------------------------------------
+# 翻訳設定
+# ---------------------------------------------------------
+with st.sidebar:
+    st.subheader("🌏 言語 / Language")
+
+    available_languages = {"日本語": "ja", "English": "en", "中文簡体": "cn", "한국어": "kr"}
+    lang_display = st.selectbox("", available_languages.keys())
+
 lang_code = available_languages[lang_display]
 t = translations[lang_code]
 
-# ===== 設定 =====
-TRAIN_DIR = "train"
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "final_trash_model.h5")
+# ---------------------------------------------------------
+# 地域選択
+# ---------------------------------------------------------
+with st.sidebar:
+    st.subheader(t["region_title"])
 
-# ===== タイトル =====
-st.title(t['title'])
-st.write(t['type'])
-st.write(t['description'])
+    wards = list(AREA_MAP[lang_code].keys())
 
-# ===== モデル・クラス読み込み =====
+    ward = st.selectbox(
+        t["select_ward"],
+        wards
+    )
+
+    area = st.selectbox(
+        t["select_area"],
+        AREA_MAP[lang_code][ward]
+    )
+
+    st.session_state.ward = ward
+    st.session_state.area = area
+
+
+# ---------------------------------------------------------
+# UI
+# ---------------------------------------------------------
+st.title(t["title"])
+
+engine = st.selectbox(
+    t["select_ocr"],
+    ["MobileNetV2", "ChatGPT-5.1", "CloudVision"]
+)
+
+input_method = st.radio(
+    t["image_input_method"],
+    [t["from_file"], t["from_camera"]]
+)
+
+# ---------------------------------------------------------
+# 画像入力
+# ---------------------------------------------------------
+uploaded_img = None
+
+if input_method == t["from_file"]:
+    file = st.file_uploader(t["upload_prompt"], ["png", "jpg", "jpeg"])
+    if file:
+        uploaded_img = Image.open(file)
+
+elif input_method == t["from_camera"]:
+    cam = st.camera_input(t["camera_prompt"])
+    if cam:
+        uploaded_img = Image.open(cam)
+
+if uploaded_img:
+    st.session_state.uploaded_img = uploaded_img
+    st.image(uploaded_img, use_container_width=True)
+
+# ---------------------------------------------------------
+# MobileNetV2
+# ---------------------------------------------------------
 @st.cache_resource
-def load_trash_model():
-    if not os.path.exists(MODEL_PATH):
-        st.error(f"モデルファイルが見つかりません: {MODEL_PATH}")
-        st.stop()
+def load_mobilenet():
     model = load_model(MODEL_PATH)
-    dataset = image_dataset_from_directory(TRAIN_DIR, image_size=(224, 224), shuffle=False)
-    class_names = dataset.class_names
-    return model, class_names
+    dataset = image_dataset_from_directory(
+        TRAIN_DIR, image_size=(224, 224), shuffle=False
+    )
+    return model, dataset.class_names
 
-model, class_names = load_trash_model()
+# ---------------------------------------------------------
+# 実行
+# ---------------------------------------------------------
+if uploaded_img and st.button(t["run_ocr"]):
+    st.session_state.step = "running"
 
-# ===== 入力方法 =====
-option = st.radio(t['input_method'], [t['fail'], t['camera']])
-uploaded_image = None
-if option == t['fail']:
-    uploaded_image = st.file_uploader(t['fail_input'], type=["jpg", "jpeg", "png"])
-elif option == t['camera']:
-    camera_photo = st.camera_input(t['camera_input'])
-    if camera_photo is not None:
-        uploaded_image = camera_photo
+# ---------------------------------------------------------
+# 推論フェーズ
+# ---------------------------------------------------------
+if st.session_state.step == "running":
+    st.session_state.step = "processing"
 
-# ===== 推論処理 =====
-if uploaded_image is not None:
-    st.image(uploaded_image, caption=t['input_image'], use_container_width=True)
+    if engine == "ChatGPT-5.1":
+        with st.spinner(t["ChatGPT_Running"]):
+            st.session_state.result = run_chatgpt_ocr(st.session_state.uploaded_img)
+        st.session_state.step = "ocr_done"
 
-    # --- 画像前処理 ---
-    img = Image.open(uploaded_image).convert("RGB").resize((224, 224))
-    x = image.img_to_array(img)
-    x = np.expand_dims(x, axis=0) / 255.0
+    elif engine == "CloudVision":
+        with st.spinner(t["CloudVision_Running"]):
+            st.session_state.result = run_cloudvision_multimodal(st.session_state.uploaded_img)
+        st.session_state.step = "ocr_done"
 
-    # --- モデル予測 ---
-    pred = model.predict(x)
-    predicted_class = class_names[np.argmax(pred)]
-    confidence = np.max(pred)
+    elif engine == "MobileNetV2":
+        with st.spinner(t["MobileNetV2_Running"]):
+            model, class_names = load_mobilenet()
 
-    # --- OCRによるスプレー検出 ---
-    is_spray_text = detect_spray_by_text(Image.open(uploaded_image).convert("RGB"))
+            img = st.session_state.uploaded_img.convert("RGB").resize((224, 224))
+            x = image.img_to_array(img)
+            x = np.expand_dims(x, axis=0) / 255.0
+            pred = model.predict(x)[0]
 
-    if is_spray_text:
-        predicted_class = "spray"
-        confidence = max(confidence, 0.95)  # OCR確定時は高信頼に設定
+        sorted_probs = sorted(
+            zip(class_names, pred),
+            key=lambda x: x[1],
+            reverse=True
+        )
 
-    # --- 多言語ラベル対応 ---
-    labels = {
-        "ja": {"battery": "乾電池", "spray": "スプレー缶", "lighter": "ライター"},
-        "en": {"battery": "Battery", "spray": "Spray Can", "lighter": "Lighter"},
-    }
-    label_translated = labels[lang_code].get(predicted_class, predicted_class)
+        top_class, top_prob = sorted_probs[0]
+        second_class, second_prob = sorted_probs[1]
 
-    # --- 判定結果表示 ---
-    st.success(f"{t['result']}: **{label_translated}**（{t['confidence']} {confidence*100:.2f}%）")
+        jp_label = JP_LABELS.get(top_class, top_class)
+        display_label = (
+            LABEL_TRANSLATIONS
+            .get(lang_code, {})
+            .get(jp_label, jp_label)
+        )
 
-    # --- ゴミの捨て方表示 ---
-    disposal_instructions = {
-        "ja": {
-            "battery": "乾電池は【不燃ごみ】に入れて捨ててください。使用済み電池は自治体の指定回収場所でも回収可能です。",
-            "spray": "スプレー缶は【危険ごみ】として、ガスを完全に使い切ってから捨ててください。",
-            "lighter": "ライターは中身を使い切り、【危険ごみ】として捨ててください。"
-        },
-        "en": {
-            "battery": "Batteries should be disposed of as non-burnable trash or at designated collection points.",
-            "spray": "Spray cans should be disposed of as hazardous waste after completely using up the gas.",
-            "lighter": "Lighters should be emptied and disposed of as hazardous waste."
-        }
-    }
-    instruction_text = disposal_instructions[lang_code].get(predicted_class, "")
-    if instruction_text:
-        st.info(f"📝 {instruction_text}")
+        st.success(
+            f"{t['predicted_label']}：{display_label}（{top_prob*100:.1f}%）"
+        )
+        # ===== 認識率グラフ（上位5クラス）=====
+        top_k = 6
+        top_items = sorted_probs[:top_k]
 
-    # --- 確率グラフ ---
-    st.subheader(t['prob_chart_subtitle'])
-    probs = pred[0]
-    class_labels = [labels[lang_code].get(c, c) for c in class_names]
+        labels = []
+        scores = []
 
-    fig, ax = plt.subplots()
-    ax.barh(class_labels, probs, color='skyblue')
-    ax.set_xlim(0, 1)
-    ax.set_xlabel(t['prob_x_label'], fontproperties=jp_prop)
-    ax.set_title(t['prob_chart_title'], fontproperties=jp_prop)
-    for i, v in enumerate(probs):
-        ax.text(v + 0.02, i, f"{v*100:.1f}%", va='center', fontproperties=jp_prop)
-    st.pyplot(fig)
+        for cls, prob in top_items:
+            jp = JP_LABELS.get(cls, cls)
+            display = (
+                LABEL_TRANSLATIONS
+                .get(lang_code, {})
+                .get(jp, jp)
+            )
+            labels.append(display)
+            scores.append(prob * 100)
 
-    # --- OCR検出の補足表示 ---
-    if is_spray_text:
-        st.info("画像内に『火気と高温に注意』という文字が検出されました。スプレー缶と判定します。")
-else:
-    st.info(t['info'])
+        chart_df = pd.DataFrame(
+            {"認識率(%)": scores},
+            index=labels
+        )
+
+        st.subheader(t["confidence_chart"])
+        st.bar_chart(chart_df)
+
+        # ===== あいまい度の数値化 =====
+        ambiguity_score = 1.0 - (top_prob - second_prob)
+        ambiguity_score = max(0.0, min(1.0, ambiguity_score))
+        ambiguity_score = float(ambiguity_score)  
+
+        # 保存（後段でも使える）
+        st.session_state.ambiguity_score = ambiguity_score
+
+        # ===== あいまい度の表示 =====
+        st.subheader(t["ambiguity_score"])
+        st.write(f"{ambiguity_score * 100:.1f}%")
+        st.progress(ambiguity_score)
+
+        # メッセージ表示
+        if ambiguity_score < 0.3:
+            st.success(t["confidence_high"])
+        elif ambiguity_score < 0.6:
+            st.warning(t["confidence_medium"])
+        else:
+            st.error(t["confidence_low"])
 
 
+        # ===== あいまい判定（既存ロジックと統合） =====
+        is_ambiguous = ambiguity_score >= 0.3
+
+        st.session_state.top_label = jp_label
+        st.session_state.second_label = JP_LABELS.get(second_class, second_class)
+
+        st.session_state.is_ambiguous = (
+            is_ambiguous and
+            top_class in OCR_TARGET_CLASSES and
+            second_class in OCR_TARGET_CLASSES
+        )
+
+
+        # ===== 次のステップ =====
+        if not st.session_state.is_ambiguous:
+            # 明確 → 即確定
+            st.session_state.result = {
+                "label": jp_label,
+                "reason": t["auxiliary_OCR_reason"]
+            }
+            st.session_state.step = "ocr_done"
+        else:
+            # 曖昧 → 第二候補確認へ
+            st.session_state.step = "confirm_second"
+
+
+# ---------------------------------------------------------
+# 第二候補 確認フェーズ
+# ---------------------------------------------------------
+if st.session_state.step == "confirm_second":
+
+    second_display = (
+        LABEL_TRANSLATIONS
+        .get(lang_code, {})
+        .get(st.session_state.second_label, st.session_state.second_label)
+    )
+
+    st.warning(
+        t["second_candidate_question"].format(
+            label=second_display
+        )
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button(t["yes"]):
+            st.session_state.result = {
+                "label": st.session_state.second_label,
+                "reason": t["second_candidate_reason"]
+            }
+            st.session_state.step = "ocr_done"
+            st.rerun()
+
+    with col2:
+        if st.button(t["no"]):
+            st.session_state.step = "classified"
+            st.rerun()
+
+    with col3:
+        if st.button(t["unknown"]):
+            st.session_state.step = "classified"
+            st.rerun()
+
+
+# ---------------------------------------------------------
+# 補助OCR選択
+# ---------------------------------------------------------
+if st.session_state.step == "classified":
+    st.warning(t["aimai_hantei"])
+
+    st.selectbox(
+        t["auxiliary_OCR"],
+        [t["not_use"], "Tesseract", "EasyOCR"],
+        key="sub_ocr_select"
+    )
+
+    if st.button(t["auxiliary_OCR_run"]):
+        st.session_state.run_sub_ocr = True
+
+# ---------------------------------------------------------
+# 補助OCR 実行
+# ---------------------------------------------------------
+if st.session_state.run_sub_ocr:
+    st.session_state.run_sub_ocr = False
+
+    img = st.session_state.uploaded_img
+    engine = st.session_state.sub_ocr_select
+
+    with st.spinner(t["auxiliary_OCR_Running"]):
+        if engine == "Tesseract":
+            result = run_tesseract(img)
+        elif engine == "EasyOCR":
+            result = run_easyocr(img)
+        else:
+            result = {
+                "label": st.session_state.top_label,
+                "reason": t["auxiliary_OCR_reason"]
+            }
+
+    st.session_state.result = result
+    st.session_state.step = "ocr_done"
+    st.rerun()
+
+# ---------------------------------------------------------
+# 結果表示 + 分別
+# ---------------------------------------------------------
+if st.session_state.step == "ocr_done":
+    result = st.session_state.result
+
+    raw_label = result.get("label")
+    label = normalize_label(raw_label)
+
+    display_label = (
+        LABEL_TRANSLATIONS
+        .get(lang_code, {})
+        .get(label, label)
+    )
+
+    st.subheader(t["predicted_label"])
+    st.success(display_label)
+
+    if "reason" in result:
+        st.subheader(t["reasoning"])
+        st.write(result["reason"])
+
+    # 分別（共通）
+    how_info = (
+        HOW_RULES
+        .get(lang_code, {})
+        .get(label, DEFAULT_HOW)
+    )
+
+    st.subheader(t["sorting_method"])
+    st.write(f"{t['sorting_classification']}{how_info['category']}")
+    st.write(f"{t['How_to_Dispose']}{how_info['how']}")
+    st.write(f"{t['Caution']}{how_info['notice']}")
+    st.write(f"{t['Cost']}{how_info['commission']}")
+
+    # 回収日（地域依存）
+    schedule_map = SCHEDULE_RULES.get(
+        (st.session_state.ward, st.session_state.area), {}
+    )
+    schedule = schedule_map.get(
+        how_info["category"],
+        DEFAULT_SCHEDULE
+    )
+
+    st.subheader(t["Collection_date"])
+    st.write(schedule)
+
+    # -------------------------------
+    # カレンダー画像表示
+    # -------------------------------
+    st.subheader(t["Calendar"])
+
+    calendar_images = get_calendar_images(
+        st.session_state.ward,
+        st.session_state.area
+    )
+
+    if calendar_images:
+        for img_path in calendar_images:
+            st.image(img_path, use_container_width=True)
+    else:
+        st.info(t["error_Calendar"])
+
+    # =====================================================
+    #  OCR デバッグ情報（Tesseract 使用時のみ）
+    # =====================================================
+    if "tesseract_debug" in st.session_state:
+
+        dbg = st.session_state["tesseract_debug"]
+
+        with st.expander("🔧 OCRデバッグ情報（開発者向け）", expanded=False):
+
+            st.subheader("OCR 前処理・ROI 画像")
+
+            for title, img in dbg["images"]:
+                st.image(
+                    cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    if img.ndim == 3 else img,
+                    caption=title,
+                    use_container_width=True
+                )
+
+            st.subheader("キーワード検出内訳")
+            if dbg["keyword_hits"]:
+                st.table(dbg["keyword_hits"])
+            else:
+                st.info("キーワードは検出されませんでした")
+
+            st.subheader("スコア集計")
+            st.write(dbg["scores"])
