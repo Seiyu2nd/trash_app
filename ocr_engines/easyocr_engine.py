@@ -1,9 +1,25 @@
-import easyocr
-import numpy as np
 from PIL import Image
+import numpy as np
 
-# 初期化（1回だけ）
-reader = easyocr.Reader(['ja', 'en'])
+# =========================================
+# easyocr は Cloud では存在しない可能性あり
+# =========================================
+try:
+    import easyocr
+    _EASYOCR_AVAILABLE = True
+except ImportError:
+    easyocr = None
+    _EASYOCR_AVAILABLE = False
+
+
+# =========================================
+# Reader 初期化（存在する場合のみ）
+# =========================================
+if _EASYOCR_AVAILABLE:
+    reader = easyocr.Reader(['ja', 'en'])
+else:
+    reader = None
+
 
 # 危険語キーワード
 SPRAY_KEYWORDS = ["火気", "高温", "エアゾール", "ガス", "噴射"]
@@ -25,7 +41,25 @@ def classify_by_keywords(text: str):
 def run_easyocr(image: Image.Image):
     """
     ChatGPT / Cloud Vision と互換の返却形式
+    Cloud 環境では easyocr が無効化される
     """
+
+    # =====================================
+    # easyocr が使えない環境（Streamlit Cloud）
+    # =====================================
+    if not _EASYOCR_AVAILABLE:
+        return {
+            "engine": "easyocr",
+            "text": "",
+            "confidence": 0.0,
+            "label": "unavailable",
+            "reason": "easyocr is not available in this environment (Streamlit Cloud)",
+            "disposal": "他の OCR エンジンの結果をご利用ください。"
+        }
+
+    # =====================================
+    # 通常処理（ローカル環境）
+    # =====================================
     img = np.array(image)
     results = reader.readtext(img)
 
